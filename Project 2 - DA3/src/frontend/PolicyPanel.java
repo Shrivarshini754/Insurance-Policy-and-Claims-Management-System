@@ -361,13 +361,38 @@ public class PolicyPanel extends JPanel {
     }
 
     private void handleDelete() {
-        if (policyTable.getSelectedRow() < 0) return;
-        String policyNo  = tableModel.getValueAt(policyTable.getSelectedRow(), 0).toString();
-        int confirm = JOptionPane.showConfirmDialog(this, "Are you sure you want to delete policy " + policyNo + "?", "Confirm Delete", JOptionPane.YES_NO_OPTION);
-        if (confirm != JOptionPane.YES_OPTION) return;
-        if (dataHandler == null) return;
-        if (dataHandler.deletePolicy(policyNo)) { setStatus("Policy deleted.", StatusType.SUCCESS); loadPolicies(); } 
-        else { setStatus("Delete failed.", StatusType.ERROR); }
+        if (policyTable.getSelectedRow() < 0) {
+            setStatus("Please select a policy from the table to delete.", StatusType.WARNING);
+            return;
+        }
+        String policyNo = tableModel.getValueAt(policyTable.getSelectedRow(), 0).toString();
+        int confirm = JOptionPane.showConfirmDialog(
+            this,
+            "<html><b>Are you sure you want to delete policy " + policyNo + "?</b><br><br>"
+                + "Deleting this record will also delete its dependent records.<br>"
+                + "Shared and unrelated records will be preserved.<br><br>"
+                + "Do you want to continue?</html>",
+            "Confirm Delete",
+            JOptionPane.YES_NO_OPTION,
+            JOptionPane.WARNING_MESSAGE
+        );
+        if (confirm != JOptionPane.YES_OPTION) {
+            setStatus("Delete cancelled.", StatusType.MUTED);
+            return;
+        }
+        if (dataHandler == null) {
+            setStatus("Backend integration pending.", StatusType.WARNING);
+            return;
+        }
+        if (dataHandler.deletePolicy(policyNo)) {
+            clearForm();
+            JOptionPane.showMessageDialog(this, "Policy deleted successfully.", "Success", JOptionPane.INFORMATION_MESSAGE);
+            setStatus("Policy deleted successfully.", StatusType.SUCCESS);
+            loadPolicies();
+        } else {
+            JOptionPane.showMessageDialog(this, "Delete failed. The record could not be deleted.", "Error", JOptionPane.ERROR_MESSAGE);
+            setStatus("Delete failed.", StatusType.ERROR);
+        }
     }
 
     private double[] validateAndCollect() {

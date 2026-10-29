@@ -225,28 +225,47 @@ public class PaymentDAO {
 
     /**
      * Deletes a payment record by claim ID and payment ID.
+     * Deletes only the selected Payment and its relationship to the Claim,
+     * preserving the associated Claim, Policy, and all unrelated records.
      *
      * @param claimId   associated claim identifier
      * @param paymentId payment identifier
-     * @return true if deleted, false if not found
+     * @return true if deleted, false if not found or deletion failed
      */
     public boolean deletePayment(String claimId, String paymentId) {
-        String cypher =
-            "MATCH (pay:Payment) " +
-            "WHERE (pay.claimId = $claimId OR pay.Claim_ID = $claimId) " +
-            "  AND (pay.paymentId = $paymentId OR pay.Payment_ID = $paymentId) " +
-            "DETACH DELETE pay " +
-            "RETURN count(pay) AS deletedCount";
+        if (claimId == null || claimId.trim().isEmpty() ||
+            paymentId == null || paymentId.trim().isEmpty()) {
+            return false;
+        }
 
         try (Session session = Neo4jConnection.getSession()) {
             return session.executeWrite(tx -> {
-                Result result = tx.run(cypher, Values.parameters(
-                    "claimId", claimId,
-                    "paymentId", paymentId
-                ));
-                return result.hasNext() && result.next().get("deletedCount").asInt() > 0;
+                // 1. Verify Payment exists
+                Result checkResult = tx.run(
+                    "MATCH (pay:Payment) " +
+                    "WHERE (pay.claimId = $claimId OR pay.Claim_ID = $claimId) " +
+                    "  AND (pay.paymentId = $paymentId OR pay.Payment_ID = $paymentId) " +
+                    "RETURN count(pay) AS cnt",
+                    Values.parameters("claimId", claimId, "paymentId", paymentId)
+                );
+
+                if (!checkResult.hasNext() || checkResult.next().get("cnt").asInt() == 0) {
+                    System.err.println("Payment '" + paymentId + "' for Claim '" + claimId + "' does not exist.");
+                    return false;
+                }
+
+                // 2. Delete the Payment node and detach its relationship to Claim
+                String deleteCypher =
+                    "MATCH (pay:Payment) " +
+                    "WHERE (pay.claimId = $claimId OR pay.Claim_ID = $claimId) " +
+                    "  AND (pay.paymentId = $paymentId OR pay.Payment_ID = $paymentId) " +
+                    "DETACH DELETE pay";
+
+                Result result = tx.run(deleteCypher, Values.parameters("claimId", claimId, "paymentId", paymentId));
+                return result.consume().counters().nodesDeleted() > 0;
             });
         } catch (Exception e) {
+            System.err.println("Error deleting payment: " + e.getMessage());
             e.printStackTrace();
             return false;
         }

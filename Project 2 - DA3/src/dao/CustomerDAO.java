@@ -48,11 +48,12 @@ public class CustomerDAO {
                     r.get("address", "")
                 });
             }
+            return results;
         } catch (Exception e) {
+            System.err.println("Error retrieving customers from Neo4j: " + e.getMessage());
             e.printStackTrace();
+            return null;
         }
-
-        return results;
     }
 
     /**
@@ -190,31 +191,70 @@ public class CustomerDAO {
     }
 
     /**
-     * Deletes a customer by person ID if no relationships exist.
-     * Prevents orphan-causing deletions if referenced by other graph nodes.
+     * Deletes a customer by person ID using full cascade deletion.
+     * Deletes exclusively owned policies, their exclusively dependent claims,
+     * and their exclusively dependent payments.
+     * Preserves covered assets, service providers, and shared policies.
      *
      * @param personId unique customer identifier
-     * @return true if deleted, false if not found or if relationships exist
+     * @return true if deleted, false if not found or deletion failed
      */
     public boolean deleteCustomer(String personId) {
-        String cypher =
-            "MATCH (c:Customer) " +
-            "WHERE c.personId = $personId OR c.Person_ID = $personId " +
-            "OPTIONAL MATCH (c)-[r]-() " +
-            "WITH c, count(r) AS relCount " +
-            "WHERE relCount = 0 " +
-            "DELETE c " +
-            "RETURN count(c) AS deletedCount";
+        if (personId == null || personId.trim().isEmpty()) {
+            return false;
+        }
 
         try (Session session = Neo4jConnection.getSession()) {
             return session.executeWrite(tx -> {
-                Result result = tx.run(cypher, Values.parameters("personId", personId));
-                if (result.hasNext()) {
-                    return result.next().get("deletedCount").asInt() > 0;
+                // 1. Verify Customer exists
+                Result checkResult = tx.run(
+                    "MATCH (c:Customer) " +
+                    "WHERE c.personId = $personId OR c.Person_ID = $personId " +
+                    "RETURN count(c) AS custCount",
+                    Values.parameters("personId", personId)
+                );
+
+                if (!checkResult.hasNext() || checkResult.next().get("custCount").asInt() == 0) {
+                    System.err.println("Customer '" + personId + "' does not exist.");
+                    return false;
                 }
-                return false;
+
+                // 2. Full cascade deletion:
+                // Delete exclusively dependent Payments, Claims, and Policies, then delete the Customer node.
+                // Preserves covered Asset nodes, ServiceProvider nodes, and shared Policies.
+                // Uses existential subqueries (EXISTS) and distinct collection aggregation to prevent duplicate deletion.
+                String deleteCypher =
+                    "MATCH (c:Customer) " +
+                    "WHERE c.personId = $personId OR c.Person_ID = $personId " +
+                    "OPTIONAL MATCH (c)-[rPol]-(p:Policy) " +
+                    "WHERE NOT EXISTS { " +
+                    "    MATCH (p)--(otherCust:Customer) " +
+                    "    WHERE otherCust <> c " +
+                    "} " +
+                    "OPTIONAL MATCH (p)-[rCl]-(cl:Claim) " +
+                    "WHERE NOT EXISTS { " +
+                    "    MATCH (cl)--(otherPol:Policy) " +
+                    "    WHERE otherPol <> p " +
+                    "} " +
+                    "OPTIONAL MATCH (cl)-[rPay]-(pay:Payment) " +
+                    "WHERE NOT EXISTS { " +
+                    "    MATCH (pay)--(otherCl:Claim) " +
+                    "    WHERE otherCl <> cl " +
+                    "} " +
+                    "WITH c, " +
+                    "     collect(DISTINCT p)   AS policies, " +
+                    "     collect(DISTINCT cl)  AS claims, " +
+                    "     collect(DISTINCT pay) AS payments " +
+                    "FOREACH (item IN payments | DETACH DELETE item) " +
+                    "FOREACH (item IN claims   | DETACH DELETE item) " +
+                    "FOREACH (item IN policies | DETACH DELETE item) " +
+                    "DETACH DELETE c";
+
+                Result result = tx.run(deleteCypher, Values.parameters("personId", personId));
+                return result.consume().counters().nodesDeleted() > 0;
             });
         } catch (Exception e) {
+            System.err.println("Error deleting customer: " + e.getMessage());
             e.printStackTrace();
             return false;
         }

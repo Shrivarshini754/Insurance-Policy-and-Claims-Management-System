@@ -133,6 +133,10 @@ public class CustomerPanel extends JPanel {
         }
         setStatus("Loading customers...", StatusType.MUTED);
         List<String[]> customers = backendService.displayCustomers();
+        if (customers == null) {
+            setStatus("Database error: Unable to load customers. Check Neo4j connection.", StatusType.ERROR);
+            return;
+        }
         setCustomerData(customers);
         int count = tableModel.getRowCount();
         setStatus(count == 0 ? "No customers found." : count + " customer(s) loaded.", StatusType.MUTED);
@@ -536,13 +540,12 @@ public class CustomerPanel extends JPanel {
         String personId   = tableModel.getValueAt(row, 0).toString();
         String firstName  = tableModel.getValueAt(row, 1).toString();
 
-        // Confirmation dialog — match existing app style
         int confirm = JOptionPane.showConfirmDialog(
             this,
-            "<html><b>Are you sure you want to delete this customer?</b><br><br>"
-                + "Person ID:  " + personId + "<br>"
-                + "Name:       " + firstName + "<br><br>"
-                + "<i>This action cannot be undone.</i></html>",
+            "<html><b>Are you sure you want to delete customer " + personId + " (" + firstName + ")?</b><br><br>"
+                + "Deleting this record will also delete its dependent records.<br>"
+                + "Shared and unrelated records will be preserved.<br><br>"
+                + "Do you want to continue?</html>",
             "Confirm Delete",
             JOptionPane.YES_NO_OPTION,
             JOptionPane.WARNING_MESSAGE
@@ -561,13 +564,14 @@ public class CustomerPanel extends JPanel {
         boolean ok = backendService.deleteCustomer(personId);
 
         if (ok) {
+            clearForm();
             JOptionPane.showMessageDialog(this, "Customer deleted successfully.", "Success", JOptionPane.INFORMATION_MESSAGE);
             setStatus("Customer deleted successfully. Refreshing table...", StatusType.SUCCESS);
             loadCustomers();
         } else {
-            JOptionPane.showMessageDialog(this, "Delete failed. The customer may be referenced by another record (e.g. a policy).", "Error", JOptionPane.ERROR_MESSAGE);
+            JOptionPane.showMessageDialog(this, "Delete failed. The record could not be deleted.", "Error", JOptionPane.ERROR_MESSAGE);
             setStatus(
-                "Delete failed. The customer may be referenced by another record (e.g. a policy).",
+                "Delete failed. The record could not be deleted.",
                 StatusType.ERROR
             );
         }

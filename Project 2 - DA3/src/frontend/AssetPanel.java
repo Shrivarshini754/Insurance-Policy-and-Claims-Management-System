@@ -399,14 +399,28 @@ public class AssetPanel extends JPanel {
     }
 
     private void handleDelete() {
-        if (assetTable.getSelectedRow() < 0) return;
-        String assetId = fldAssetId.getText().trim();
+        int row = assetTable.getSelectedRow();
+        if (row < 0) {
+            setStatus("Please select an asset from the table to delete.", StatusType.WARNING);
+            return;
+        }
+        String assetId = tableModel.getValueAt(row, 0).toString().trim();
 
-        int confirm = JOptionPane.showConfirmDialog(this,
-            "<html><b>Are you sure you want to delete this asset?</b><br><br>Asset ID: " + assetId + "</html>",
-            "Confirm Delete", JOptionPane.YES_NO_OPTION, JOptionPane.WARNING_MESSAGE);
+        int confirm = JOptionPane.showConfirmDialog(
+            this,
+            "<html><b>Are you sure you want to delete asset " + assetId + "?</b><br><br>"
+                + "Deleting this record will also delete its dependent records.<br>"
+                + "Shared and unrelated records will be preserved.<br><br>"
+                + "Do you want to continue?</html>",
+            "Confirm Delete",
+            JOptionPane.YES_NO_OPTION,
+            JOptionPane.WARNING_MESSAGE
+        );
 
-        if (confirm != JOptionPane.YES_OPTION) return;
+        if (confirm != JOptionPane.YES_OPTION) {
+            setStatus("Delete cancelled.", StatusType.MUTED);
+            return;
+        }
 
         if (dataHandler == null) {
             setStatus("Backend integration pending.", StatusType.WARNING);
@@ -414,9 +428,12 @@ public class AssetPanel extends JPanel {
         }
 
         if (dataHandler.deleteAsset(assetId)) {
-            setStatus("Asset deleted successfully. Refreshing...", StatusType.SUCCESS);
+            clearForm();
+            JOptionPane.showMessageDialog(this, "Asset deleted successfully.", "Success", JOptionPane.INFORMATION_MESSAGE);
+            setStatus("Asset deleted successfully.", StatusType.SUCCESS);
             loadAssets();
         } else {
+            JOptionPane.showMessageDialog(this, "Delete failed. The record could not be deleted.", "Error", JOptionPane.ERROR_MESSAGE);
             setStatus("Delete failed.", StatusType.ERROR);
         }
     }

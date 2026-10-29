@@ -61,6 +61,7 @@ public class MainFrame extends JFrame {
     private JButton[]  navButtons;
 
     // -- Panels ------------------------------------------------------------
+    private CustomerPanel customerPanel;
     private AssetPanel assetPanel;
     private PolicyPanel policyPanel;
     private ClaimPanel claimPanel;
@@ -68,13 +69,15 @@ public class MainFrame extends JFrame {
 
     public MainFrame() {
         Runtime.getRuntime().addShutdownHook(
-    new Thread(db.Neo4jConnection::closeDriver)
+            db.DatabaseConfig.isElasticsearch() 
+                ? new Thread(db.ElasticsearchConnection::closeClient)
+                : new Thread(db.Neo4jConnection::closeDriver)
 );
         this.backendService = new BackendService();
-        this.assetDAO = new AssetDAO();
-        this.policyDAO = new PolicyDAO();
-        this.claimDAO = new ClaimDAO();
-        this.paymentDAO = new PaymentDAO();
+        this.assetDAO = this.backendService.getAssetDAO();
+        this.policyDAO = this.backendService.getPolicyDAO();
+        this.claimDAO = this.backendService.getClaimDAO();
+        this.paymentDAO = this.backendService.getPaymentDAO();
 
         applyLookAndFeel();
         initFrame();
@@ -90,7 +93,7 @@ public class MainFrame extends JFrame {
     }
 
     private void initFrame() {
-        setTitle("InsureTrack - Insurance Policy Claims System");
+        setTitle("InsureTrack - Insurance Policy Claims System [" + db.DatabaseConfig.getActiveBackend().toUpperCase() + "]");
         setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
         setMinimumSize(new Dimension(1100, 650));
         setSize(new Dimension(1280, 760));
@@ -274,7 +277,11 @@ public class MainFrame extends JFrame {
 
         navButtons = new JButton[NAV_ITEMS.length];
         for (int i = 0; i < NAV_ITEMS.length; i++) {
-            JButton btn = makeNavButton(NAV_ITEMS[i][1], NAV_ITEMS[i][0]);
+            String label = NAV_ITEMS[i][1];
+            if ("sql".equals(NAV_ITEMS[i][0]) && db.DatabaseConfig.isElasticsearch()) {
+                label = "   ES Query Console";
+            }
+            JButton btn = makeNavButton(label, NAV_ITEMS[i][0]);
             navButtons[i] = btn;
             nav.add(btn);
             nav.add(Box.createRigidArea(new Dimension(0, 2)));
@@ -348,7 +355,8 @@ public class MainFrame extends JFrame {
 
         // 1. Pre-wired panels
         contentPanel.add(new DashboardPanel(this.backendService), "dashboard");
-        contentPanel.add(new CustomerPanel(this.backendService), "customers");
+        customerPanel = new CustomerPanel(this.backendService);
+        contentPanel.add(customerPanel, "customers");
         contentPanel.add(new SQLQueryPanel(this.backendService), "sql");
 
         // 2. Setup and wire Policy Panel
@@ -425,7 +433,8 @@ public class MainFrame extends JFrame {
 
         // Refresh data whenever tab is clicked
         switch (key) {
-            case "policies" -> policyPanel.loadPolicies();
+            case "customers" -> customerPanel.loadCustomers();
+            case "policies"  -> policyPanel.loadPolicies();
             case "claims"   -> claimPanel.loadClaims();
             case "payments" -> paymentPanel.loadPayments();
             case "assets"   -> assetPanel.loadAssets();
@@ -440,7 +449,7 @@ public class MainFrame extends JFrame {
             case "claims"    -> "Claims";
             case "payments"  -> "Payments";
             case "assets"    -> "Assets";
-            case "sql"       -> "Cypher Query";
+            case "sql"       -> db.DatabaseConfig.isElasticsearch() ? "Elasticsearch Query Console" : "Cypher Query";
             default          -> key;
         };
         headerTitleLabel.setText(title);

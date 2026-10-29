@@ -151,37 +151,78 @@ public class AssetDAO {
     }
 
     /**
-     * Deletes an asset by asset ID if no relationships exist.
+     * Deletes an asset by asset ID using full cascade deletion.
+     * Deletes the asset and any orphan policies exclusively covering this asset
+     * that have no customer owner, along with their exclusively dependent claims and payments.
+     * Preserves customer-owned policies, shared policies, and service providers.
      *
      * @param assetId unique asset identifier
-     * @return true if deleted, false if not found or has relationships
+     * @return true if deleted, false if not found or deletion failed
      */
     public boolean deleteAsset(String assetId) {
-    if (assetId == null || assetId.trim().isEmpty()) {
-        return false;
-    }
+        if (assetId == null || assetId.trim().isEmpty()) {
+            return false;
+        }
 
-    String cypher =
-        "MATCH (a:Asset) " +
-        "WHERE a.assetId = $assetId OR a.Asset_ID = $assetId " +
-        "OPTIONAL MATCH (a)-[r]-() " +
-        "WITH a, count(r) AS relCount " +
-        "WHERE relCount = 0 " +
-        "DELETE a " +
-        "RETURN count(a) AS deletedCount";
+        try (Session session = Neo4jConnection.getSession()) {
+            return session.executeWrite(tx -> {
+                // 1. Verify Asset exists
+                Result checkResult = tx.run(
+                    "MATCH (a:Asset) " +
+                    "WHERE a.assetId = $assetId OR a.Asset_ID = $assetId " +
+                    "RETURN count(a) AS cnt",
+                    Values.parameters("assetId", assetId)
+                );
 
-    try (Session session = Neo4jConnection.getSession()) {
-        return session.executeWrite(tx -> {
-            Result result = tx.run(cypher,
-                Values.parameters("assetId", assetId));
-            return result.hasNext()
-                && result.next().get("deletedCount").asInt() > 0;
-        });
-    } catch (Exception e) {
-        e.printStackTrace();
-        return false;
+                if (!checkResult.hasNext() || checkResult.next().get("cnt").asInt() == 0) {
+                    System.err.println("Asset '" + assetId + "' does not exist.");
+                    return false;
+                }
+
+                // 2. Cascade delete:
+                // Delete orphan policies exclusively covering this asset (with no customer owner),
+                // their exclusive claims/payments, and the Asset node.
+                // Preserves customer-owned policies, multi-asset policies, and service providers.
+                // Uses existential subqueries (EXISTS) and distinct collection aggregation to prevent duplicate deletion.
+                String deleteCypher =
+                    "MATCH (a:Asset) " +
+                    "WHERE a.assetId = $assetId OR a.Asset_ID = $assetId " +
+                    "OPTIONAL MATCH (a)-[rPol]-(p:Policy) " +
+                    "WHERE NOT EXISTS { " +
+                    "    MATCH (p)--(otherAsset:Asset) " +
+                    "    WHERE otherAsset <> a " +
+                    "} " +
+                    "  AND NOT EXISTS { " +
+                    "    MATCH (p)--(:Customer) " +
+                    "} " +
+                    "OPTIONAL MATCH (p)-[rCl]-(cl:Claim) " +
+                    "WHERE NOT EXISTS { " +
+                    "    MATCH (cl)--(otherPol:Policy) " +
+                    "    WHERE otherPol <> p " +
+                    "} " +
+                    "OPTIONAL MATCH (cl)-[rPay]-(pay:Payment) " +
+                    "WHERE NOT EXISTS { " +
+                    "    MATCH (pay)--(otherCl:Claim) " +
+                    "    WHERE otherCl <> cl " +
+                    "} " +
+                    "WITH a, " +
+                    "     collect(DISTINCT p)   AS policies, " +
+                    "     collect(DISTINCT cl)  AS claims, " +
+                    "     collect(DISTINCT pay) AS payments " +
+                    "FOREACH (item IN payments | DETACH DELETE item) " +
+                    "FOREACH (item IN claims   | DETACH DELETE item) " +
+                    "FOREACH (item IN policies | DETACH DELETE item) " +
+                    "DETACH DELETE a";
+
+                Result result = tx.run(deleteCypher, Values.parameters("assetId", assetId));
+                return result.consume().counters().nodesDeleted() > 0;
+            });
+        } catch (Exception e) {
+            System.err.println("Error deleting asset: " + e.getMessage());
+            e.printStackTrace();
+            return false;
+        }
     }
-}
 
     /**
      * Counts the total number of Asset nodes in Neo4j.

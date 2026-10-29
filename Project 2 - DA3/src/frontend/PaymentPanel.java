@@ -422,15 +422,29 @@ public class PaymentPanel extends JPanel {
     }
 
     private void handleDelete() {
-        if (paymentTable.getSelectedRow() < 0) return;
-        String claimId = fldClaimId.getText().trim();
-        String paymentId = fldPaymentId.getText().trim();
+        int row = paymentTable.getSelectedRow();
+        if (row < 0) {
+            setStatus("Please select a payment from the table to delete.", StatusType.WARNING);
+            return;
+        }
+        String claimId = tableModel.getValueAt(row, 0).toString().trim();
+        String paymentId = tableModel.getValueAt(row, 1).toString().trim();
 
-        int confirm = JOptionPane.showConfirmDialog(this,
-            "<html><b>Are you sure you want to delete this payment?</b><br><br>Claim ID: " + claimId + "<br>Payment ID: " + paymentId + "</html>",
-            "Confirm Delete", JOptionPane.YES_NO_OPTION, JOptionPane.WARNING_MESSAGE);
+        int confirm = JOptionPane.showConfirmDialog(
+            this,
+            "<html><b>Are you sure you want to delete payment " + paymentId + " (Claim: " + claimId + ")?</b><br><br>"
+                + "Deleting this record will also delete its dependent records.<br>"
+                + "Shared and unrelated records will be preserved.<br><br>"
+                + "Do you want to continue?</html>",
+            "Confirm Delete",
+            JOptionPane.YES_NO_OPTION,
+            JOptionPane.WARNING_MESSAGE
+        );
 
-        if (confirm != JOptionPane.YES_OPTION) return;
+        if (confirm != JOptionPane.YES_OPTION) {
+            setStatus("Delete cancelled.", StatusType.MUTED);
+            return;
+        }
 
         if (dataHandler == null) {
             setStatus("Backend integration pending.", StatusType.WARNING);
@@ -438,9 +452,12 @@ public class PaymentPanel extends JPanel {
         }
 
         if (dataHandler.deletePayment(claimId, paymentId)) {
-            setStatus("Payment deleted successfully. Refreshing...", StatusType.SUCCESS);
+            clearForm();
+            JOptionPane.showMessageDialog(this, "Payment deleted successfully.", "Success", JOptionPane.INFORMATION_MESSAGE);
+            setStatus("Payment deleted successfully.", StatusType.SUCCESS);
             loadPayments();
         } else {
+            JOptionPane.showMessageDialog(this, "Delete failed. The record could not be deleted.", "Error", JOptionPane.ERROR_MESSAGE);
             setStatus("Delete failed.", StatusType.ERROR);
         }
     }

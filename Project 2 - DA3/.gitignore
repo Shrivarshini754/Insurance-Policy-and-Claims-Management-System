@@ -1,0 +1,13 @@
+﻿target/
+build/
+out/
+*.class
+*.log
+.env
+.env.*
+!.env.example
+secrets.properties
+application-local.properties
+.idea/
+.vscode/
+.DS_Store

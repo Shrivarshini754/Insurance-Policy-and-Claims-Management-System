@@ -255,13 +255,12 @@ public class ClaimDAO {
     }
 
     /**
-     * Deletes a claim by claim ID only if no relationships exist
-     * (e.g. no HAS_PAYMENT relationships to Payment nodes).
-     * Does NOT use DETACH DELETE - explicitly rejects deletion when
-     * associated payments or other relationships remain.
+     * Deletes a claim by claim ID using full cascade deletion.
+     * Deletes exclusively dependent payments.
+     * Preserves associated Policy, ServiceProvider, Asset, and Customer nodes.
      *
      * @param claimId unique claim identifier
-     * @return true if deleted, false if not found or if relationships prevent deletion
+     * @return true if deleted, false if not found or deletion failed
      */
     public boolean deleteClaim(String claimId) {
         if (claimId == null || claimId.trim().isEmpty()) {
@@ -270,32 +269,40 @@ public class ClaimDAO {
 
         try (Session session = Neo4jConnection.getSession()) {
             return session.executeWrite(tx -> {
-                // 1. Check for outgoing relationships (e.g. HAS_PAYMENT)
-                //    that would be orphaned by deletion
-                Result checkPayments = tx.run(
-                    "MATCH (c:Claim)-[r:HAS_PAYMENT]->() " +
+                // 1. Verify Claim exists
+                Result checkResult = tx.run(
+                    "MATCH (c:Claim) " +
                     "WHERE c.claimId = $claimId OR c.Claim_ID = $claimId " +
-                    "RETURN count(r) AS paymentCount",
+                    "RETURN count(c) AS cnt",
                     Values.parameters("claimId", claimId)
                 );
-                if (checkPayments.hasNext() && checkPayments.next().get("paymentCount").asInt() > 0) {
-                    System.err.println("Cannot delete claim '" + claimId +
-                        "': associated payments exist. Delete payments first.");
+
+                if (!checkResult.hasNext() || checkResult.next().get("cnt").asInt() == 0) {
+                    System.err.println("Claim '" + claimId + "' does not exist.");
                     return false;
                 }
 
-                // 2. Delete the claim node and its incoming HAS_CLAIM relationship
-                //    from the parent Policy (safe because we verified no outgoing rels)
+                // 2. Cascade delete:
+                // Delete exclusively dependent Payments, then delete the Claim node.
+                // Preserves associated Policy, ServiceProvider, Asset, and Customer nodes.
+                // Uses existential subqueries (EXISTS) and distinct collection aggregation to prevent duplicate deletion.
                 String deleteCypher =
                     "MATCH (c:Claim) " +
                     "WHERE c.claimId = $claimId OR c.Claim_ID = $claimId " +
-                    "OPTIONAL MATCH (p:Policy)-[r:HAS_CLAIM]->(c) " +
-                    "DELETE r, c";
+                    "OPTIONAL MATCH (c)-[rPay]-(pay:Payment) " +
+                    "WHERE NOT EXISTS { " +
+                    "    MATCH (pay)--(otherClaim:Claim) " +
+                    "    WHERE otherClaim <> c " +
+                    "} " +
+                    "WITH c, collect(DISTINCT pay) AS payments " +
+                    "FOREACH (item IN payments | DETACH DELETE item) " +
+                    "DETACH DELETE c";
 
                 Result result = tx.run(deleteCypher, Values.parameters("claimId", claimId));
                 return result.consume().counters().nodesDeleted() > 0;
             });
         } catch (Exception e) {
+            System.err.println("Error deleting claim: " + e.getMessage());
             e.printStackTrace();
             return false;
         }

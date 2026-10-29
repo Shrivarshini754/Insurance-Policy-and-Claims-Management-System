@@ -181,31 +181,62 @@ public class PolicyDAO {
     }
 
     /**
-     * Deletes a policy by policy number if no relationships exist.
-     * Prevents orphan-causing deletions if referenced by claims.
+     * Deletes a policy by policy number using full cascade deletion.
+     * Deletes exclusively dependent claims and their exclusively dependent payments.
+     * Preserves associated Customer, Asset, and ServiceProvider nodes.
      *
      * @param policyNo unique policy identifier
-     * @return true if deleted, false if not found or if relationships exist
+     * @return true if deleted, false if not found or deletion failed
      */
     public boolean deletePolicy(String policyNo) {
-        String cypher =
-            "MATCH (p:Policy) " +
-            "WHERE p.policyNo = $policyNo OR p.P_No = $policyNo " +
-            "OPTIONAL MATCH (p)-[r]-() " +
-            "WITH p, count(r) AS relCount " +
-            "WHERE relCount = 0 " +
-            "DELETE p " +
-            "RETURN count(p) AS deletedCount";
+        if (policyNo == null || policyNo.trim().isEmpty()) {
+            return false;
+        }
 
         try (Session session = Neo4jConnection.getSession()) {
             return session.executeWrite(tx -> {
-                Result result = tx.run(cypher, Values.parameters("policyNo", policyNo));
-                if (result.hasNext()) {
-                    return result.next().get("deletedCount").asInt() > 0;
+                // 1. Verify Policy exists
+                Result checkResult = tx.run(
+                    "MATCH (p:Policy) " +
+                    "WHERE p.policyNo = $policyNo OR p.P_No = $policyNo " +
+                    "RETURN count(p) AS cnt",
+                    Values.parameters("policyNo", policyNo)
+                );
+
+                if (!checkResult.hasNext() || checkResult.next().get("cnt").asInt() == 0) {
+                    System.err.println("Policy '" + policyNo + "' does not exist.");
+                    return false;
                 }
-                return false;
+
+                // 2. Cascade delete:
+                // Delete exclusively dependent Payments and Claims, then delete the Policy node.
+                // Preserves associated Customer, Asset, and ServiceProvider nodes.
+                // Uses existential subqueries (EXISTS) and distinct collection aggregation to prevent duplicate deletion.
+                String deleteCypher =
+                    "MATCH (p:Policy) " +
+                    "WHERE p.policyNo = $policyNo OR p.P_No = $policyNo " +
+                    "OPTIONAL MATCH (p)-[rCl]-(cl:Claim) " +
+                    "WHERE NOT EXISTS { " +
+                    "    MATCH (cl)--(otherPol:Policy) " +
+                    "    WHERE otherPol <> p " +
+                    "} " +
+                    "OPTIONAL MATCH (cl)-[rPay]-(pay:Payment) " +
+                    "WHERE NOT EXISTS { " +
+                    "    MATCH (pay)--(otherCl:Claim) " +
+                    "    WHERE otherCl <> cl " +
+                    "} " +
+                    "WITH p, " +
+                    "     collect(DISTINCT cl)  AS claims, " +
+                    "     collect(DISTINCT pay) AS payments " +
+                    "FOREACH (item IN payments | DETACH DELETE item) " +
+                    "FOREACH (item IN claims   | DETACH DELETE item) " +
+                    "DETACH DELETE p";
+
+                Result result = tx.run(deleteCypher, Values.parameters("policyNo", policyNo));
+                return result.consume().counters().nodesDeleted() > 0;
             });
         } catch (Exception e) {
+            System.err.println("Error deleting policy: " + e.getMessage());
             e.printStackTrace();
             return false;
         }

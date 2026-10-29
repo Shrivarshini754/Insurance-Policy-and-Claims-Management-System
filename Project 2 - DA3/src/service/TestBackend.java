@@ -49,14 +49,17 @@ public class TestBackend {
 
                 case 1:
                     List<String[]> customers = service.displayCustomers();
-                    for (String[] row : customers) {
-                        System.out.println(
-                            row[0] + " | " + row[1] + " | " + row[2] +
-                            " | " + row[3] + " | " + row[4] + " | " + row[5]
-                        );
-                    }
-                    if (customers.isEmpty()) {
+                    if (customers == null) {
+                        System.out.println("Failed to load customers (database error).");
+                    } else if (customers.isEmpty()) {
                         System.out.println("No customers found.");
+                    } else {
+                        for (String[] row : customers) {
+                            System.out.println(
+                                row[0] + " | " + row[1] + " | " + row[2] +
+                                " | " + row[3] + " | " + row[4] + " | " + row[5]
+                            );
+                        }
                     }
                     break;
 

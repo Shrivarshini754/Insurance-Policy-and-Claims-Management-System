@@ -1,6 +1,7 @@
 package service;
 
 import dao.*; // The * imports all your DAOs (AssetDAO, ClaimDAO, etc.)
+import model.ElasticsearchQueryResult;
 import model.QueryResult;
 import java.util.List;
 
@@ -14,12 +15,45 @@ public class BackendService {
     private QueryDAO queryDAO;
 
     public BackendService() {
-        customerDAO = new CustomerDAO();
-        policyDAO = new PolicyDAO();
-        claimDAO = new ClaimDAO();
-        paymentDAO = new PaymentDAO();
-        assetDAO = new AssetDAO();
-        queryDAO = new QueryDAO();
+        if (db.DatabaseConfig.isElasticsearch()) {
+            customerDAO = new ElasticsearchCustomerDAO();
+            policyDAO = new ElasticsearchPolicyDAO();
+            claimDAO = new ElasticsearchClaimDAO();
+            paymentDAO = new ElasticsearchPaymentDAO();
+            assetDAO = new ElasticsearchAssetDAO();
+            queryDAO = new ElasticsearchQueryDAO();
+        } else {
+            customerDAO = new CustomerDAO();
+            policyDAO = new PolicyDAO();
+            claimDAO = new ClaimDAO();
+            paymentDAO = new PaymentDAO();
+            assetDAO = new AssetDAO();
+            queryDAO = new QueryDAO();
+        }
+    }
+
+    public CustomerDAO getCustomerDAO() {
+        return customerDAO;
+    }
+
+    public PolicyDAO getPolicyDAO() {
+        return policyDAO;
+    }
+
+    public ClaimDAO getClaimDAO() {
+        return claimDAO;
+    }
+
+    public PaymentDAO getPaymentDAO() {
+        return paymentDAO;
+    }
+
+    public AssetDAO getAssetDAO() {
+        return assetDAO;
+    }
+
+    public QueryDAO getQueryDAO() {
+        return queryDAO;
     }
 
     // ==================== Customer ====================
@@ -304,5 +338,17 @@ public class BackendService {
 
     public QueryResult executeQuery(String sql) {
         return queryDAO.executeQuery(sql);
+    }
+
+    public ElasticsearchQueryResult executeElasticsearchQuery(String index, String endpoint, String jsonBody) {
+        if (queryDAO instanceof ElasticsearchQueryDAO) {
+            return ((ElasticsearchQueryDAO) queryDAO).executeElasticsearchQuery(index, endpoint, jsonBody);
+        }
+        return ElasticsearchQueryResult.failure(
+            400,
+            endpoint,
+            "Active database backend is not Elasticsearch. Launch with -Ddb.backend=elasticsearch to use the Elasticsearch Query Console.",
+            null
+        );
     }
 }

@@ -213,9 +213,40 @@ public class ClaimPanel extends JPanel {
     }
 
     private void handleDelete() {
-        if (claimTable.getSelectedRow() < 0 || dataHandler == null) return;
-        boolean ok = dataHandler.deleteClaim(fldClaimId.getText().trim());
-        if (ok) loadClaims();
+        int row = claimTable.getSelectedRow();
+        if (row < 0) {
+            setStatus("Please select a claim from the table to delete.", StatusType.WARNING);
+            return;
+        }
+        String claimId = tableModel.getValueAt(row, 0).toString().trim();
+        int confirm = JOptionPane.showConfirmDialog(
+            this,
+            "<html><b>Are you sure you want to delete claim " + claimId + "?</b><br><br>"
+                + "Deleting this record will also delete its dependent records.<br>"
+                + "Shared and unrelated records will be preserved.<br><br>"
+                + "Do you want to continue?</html>",
+            "Confirm Delete",
+            JOptionPane.YES_NO_OPTION,
+            JOptionPane.WARNING_MESSAGE
+        );
+        if (confirm != JOptionPane.YES_OPTION) {
+            setStatus("Delete cancelled.", StatusType.MUTED);
+            return;
+        }
+        if (dataHandler == null) {
+            setStatus("Backend integration pending.", StatusType.WARNING);
+            return;
+        }
+        boolean ok = dataHandler.deleteClaim(claimId);
+        if (ok) {
+            clearForm();
+            JOptionPane.showMessageDialog(this, "Claim deleted successfully.", "Success", JOptionPane.INFORMATION_MESSAGE);
+            setStatus("Claim deleted successfully.", StatusType.SUCCESS);
+            loadClaims();
+        } else {
+            JOptionPane.showMessageDialog(this, "Delete failed. The record could not be deleted.", "Error", JOptionPane.ERROR_MESSAGE);
+            setStatus("Delete failed.", StatusType.ERROR);
+        }
     }
 
     private void clearForm() {
